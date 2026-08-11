@@ -12,6 +12,7 @@ SOURCES_C   :=
 SOURCES_CXX := \
 	$(CORE_EMU_DIR)/cart.cpp \
 	$(CORE_EMU_DIR)/c65c02.cpp \
+	$(CORE_EMU_DIR)/lynx_com.cpp \
 	$(CORE_EMU_DIR)/memmap.cpp \
 	$(CORE_EMU_DIR)/mikie.cpp \
 	$(CORE_EMU_DIR)/ram.cpp \

@@ -57,12 +57,12 @@ MDFNGI *MDFNGameInfo = &EmulatedLynx;
 #define MEDNAFEN_CORE_VERSION "v1.24.0-comlynx"
 #define MEDNAFEN_CORE_EXTENSIONS "lnx|lyx|bll|o"
 #define MEDNAFEN_CORE_TIMING_FPS 75.0
-#define MEDNAFEN_CORE_GEOMETRY_BASE_W 160
+#define MEDNAFEN_CORE_GEOMETRY_BASE_W 320
 #define MEDNAFEN_CORE_GEOMETRY_BASE_H 102
-#define MEDNAFEN_CORE_GEOMETRY_MAX_W 160
+#define MEDNAFEN_CORE_GEOMETRY_MAX_W 320
 #define MEDNAFEN_CORE_GEOMETRY_MAX_H 102
-#define MEDNAFEN_CORE_GEOMETRY_ASPECT_RATIO (80.0 / 51.0)
-#define FB_WIDTH 160
+#define MEDNAFEN_CORE_GEOMETRY_ASPECT_RATIO (320.0 / 102.0)
+#define FB_WIDTH 320
 #define FB_HEIGHT 102
 
 #define FB_MAX_HEIGHT FB_HEIGHT
@@ -164,9 +164,9 @@ static void check_variables(void)
    }
 }
 
-#define MAX_PLAYERS 1
+#define MAX_PLAYERS 2
 #define MAX_BUTTONS 9
-static uint8_t input_buf[2];
+static uint8_t input_buf[MAX_PLAYERS * 2];
 
 static bool MDFNI_LoadGame(const uint8_t *data, size_t size)
 {
@@ -282,9 +282,11 @@ bool retro_load_game(const struct retro_game_info *info)
       return false;
    }
 
-   lynxie->DisplaySetAttributes(surf->bpp);
-
-   SetInput(0, "gamepad", (uint8_t*)&input_buf);
+   for (unsigned i = 0; i < NumMachines; i++)
+   {
+      machine[i]->DisplaySetAttributes(surf->bpp);
+      SetInput(i, "gamepad", &input_buf[i * 2]);
+   }
 
    rotate_mode = 0;
    rotate_fixed = 0;
@@ -367,30 +369,39 @@ static void update_input(void)
    };
 
    unsigned select_button = 0;
-   uint16_t input_state = 0;
 
-   if (libretro_supports_input_bitmasks)
+   /* Both machines are shown on the one surface and rotated together, so the
+    * same D-pad remapping applies to both pads.  Only the first pad doubles as
+    * the rotation control: the key belongs to the screen, not to a player. */
+   for (unsigned port = 0; port < MAX_PLAYERS; port++)
    {
-      int16_t ret = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK);
-      for (unsigned i = 0; i < MAX_BUTTONS; i++)
-         input_state |= ret & (1 << map[rotate_screen][i]) ? (1 << i) : 0;
-      select_button = ret & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT);
-   }
-   else
-   {
-      for (unsigned i = 0; i < MAX_BUTTONS; i++)
-         input_state |= input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, map[rotate_screen][i]) ? (1 << i) : 0;
-      select_button = input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT);
-   }
+      uint16_t input_state = 0;
 
-   // Input data must be little endian.
-   input_buf[0] = (input_state >> 0) & 0xff;
-   input_buf[1] = (input_state >> 8) & 0xff;
+      if (libretro_supports_input_bitmasks)
+      {
+         int16_t ret = input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK);
+         for (unsigned i = 0; i < MAX_BUTTONS; i++)
+            input_state |= ret & (1 << map[rotate_screen][i]) ? (1 << i) : 0;
+         if (port == 0)
+            select_button = ret & (1 << RETRO_DEVICE_ID_JOYPAD_SELECT);
+      }
+      else
+      {
+         for (unsigned i = 0; i < MAX_BUTTONS; i++)
+            input_state |= input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, map[rotate_screen][i]) ? (1 << i) : 0;
+         if (port == 0)
+            select_button = input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT);
+      }
+
+      // Input data must be little endian.
+      input_buf[port * 2 + 0] = (input_state >> 0) & 0xff;
+      input_buf[port * 2 + 1] = (input_state >> 8) & 0xff;
+   }
 
    switch (rotate_mode)
    {
    case 1: /* auto rotation */
-      switch (lynxie->CartGetRotate())
+      switch (machine[0]->CartGetRotate())
       {
       case CART_ROTATE_RIGHT: rotate_screen = 3; break;
       case CART_ROTATE_LEFT:  rotate_screen = 1;  break;
@@ -415,7 +426,7 @@ static void update_input(void)
          rotate_screen = 0;
       rotate_screen_last_frame = rotate_screen;
 
-      const float aspect[2] = { (80.0 / 51.0), (51.0 / 80.0) };
+      const float aspect[2] = { (320.0 / 102.0), (102.0 / 320.0) };
       const unsigned rot_angle[4] = { 0, 1, 2, 3 };
       struct retro_game_geometry new_geom = { FB_WIDTH, FB_HEIGHT, FB_WIDTH, FB_HEIGHT, aspect[rotate_screen & 1] };
       environ_cb(RETRO_ENVIRONMENT_SET_GEOMETRY, (void*)&new_geom);
@@ -611,8 +622,10 @@ bool retro_unserialize(const void *data, size_t size)
 
 void *retro_get_memory_data(unsigned type)
 {
-   if (lynxie && type == RETRO_MEMORY_SYSTEM_RAM)
-      return lynxie->GetRamPointer();
+   /* Machine 1 only: a cheat list or an achievement has no way to say which
+    * machine it means. */
+   if (machine[0] && type == RETRO_MEMORY_SYSTEM_RAM)
+      return machine[0]->GetRamPointer();
    return NULL;
 }
 

@@ -242,6 +242,25 @@ void SetInput(unsigned port, const char *type, uint8 *ptr);
 int StateAction(StateMem *sm, const unsigned load, const bool data_only);
 void DoSimpleCommand(int cmd);
 
-extern CSystem *lynxie;
+// Screen slots on the output surface.  Always two, so the geometry the core
+// reports never depends on how many machines are actually wired up yet.
+#define LYNXCOM_SCREENS		2
+#define LYNXCOM_SCREEN_W	HANDY_SCREEN_WIDTH
+#define LYNXCOM_SCREEN_H	HANDY_SCREEN_HEIGHT
+#define LYNXCOM_SURFACE_W	(LYNXCOM_SCREEN_W * LYNXCOM_SCREENS)
+
+// The most machines this could ever drive.  ComLynx itself tops out at eight,
+// and several games -- Gauntlet, Battle Wheels -- do use more than two.  Nothing
+// drives more than NumMachines today; the constant exists so that what goes into
+// a save state is already the right shape.  Growing an array that the state
+// format carries would invalidate every state written before the change.
+#define LYNXCOM_MAX_MACHINES	8
+
+// The linked machines, and how many of them exist.  Defined by lynx_com.cpp.
+extern CSystem *machine[LYNXCOM_MAX_MACHINES];
+extern const unsigned NumMachines;
+
+extern bool     LynxComTxRdyIRQ;
+extern unsigned LynxComSoundMachine;
 
 #endif
