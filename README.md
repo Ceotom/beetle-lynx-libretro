@@ -24,6 +24,29 @@ nothing was ever wired to the other end of the cable.
 The 512-byte Lynx boot ROM, named `lynxboot.img`, must be present in the libretro
 system directory, exactly as for Beetle Lynx.
 
+## Core options
+
+Beyond the ones Beetle Lynx already has (`Auto-rotate Screen`, `Color Format`,
+`Force 60Hz`):
+
+- **ComLynx: Sound From Machine** — which of the two machines is heard. Both are
+  emulated in full either way; only one stream can go to the frontend. Takes effect
+  immediately.
+- **ComLynx: Transmit IRQ on TXRDY** — raise the transmit interrupt when the holding
+  register frees rather than when the shift register empties. Default off. Only
+  California Games needs it, and it needs it to pair up at all; with this off it
+  never gets past its own title screen in two-player. It costs everything else:
+  a game's link traffic multiplies two to four times, which measurably costs Hockey,
+  Zarlor Mercenary and Basketbrawl their frame rate and makes Checkered Flag stutter.
+  Turning it on also staggers the two machines further apart at start, because
+  California Games needs both together and neither alone. Applied when content is
+  loaded, so it needs a restart to take effect.
+
+**Netplay:** the transmit interrupt option changes link timing, so two peers that
+disagree about it will desynchronise. Unlike the Mednafen module this core cannot fold
+a setting into the room's identity, so nothing stops such a session from connecting —
+check that both sides match before starting one.
+
 ## Status
 
 Work in progress, on branch `comlynx`.
@@ -31,7 +54,7 @@ Work in progress, on branch `comlynx`.
 - [x] Core renamed and building as Beetle Lynx-Com
 - [x] Shared core changes (link timing, transmitter, save state coverage)
 - [x] Two-machine driver, 320x102 output, two input ports
-- [ ] Core options and settings
+- [x] Core options and settings
 - [ ] Save states and the save state self test
 
 ## Building

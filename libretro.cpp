@@ -162,11 +162,34 @@ static void check_variables(void)
       else
          force_60hz = false;
    }
+
+   /* Read every frame the frontend says something changed, so this one takes
+    * effect immediately: the unheard machine's buffer is emptied each frame
+    * either way, so there is nothing stale to carry over. */
+   var.key = "lynx_com_sound_machine";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+   {
+      unsigned m = (unsigned)atoi(var.value);
+
+      LynxComSoundMachine = (m >= 1 && m <= NumMachines) ? m - 1 : 0;
+   }
+
+   /* Read here too, but only Load() ever looks at it: it picks the start
+    * offset between the machines, which is applied once and never revisited.
+    * That is what "Restart Required" means on this one. */
+   var.key = "lynx_com_uart_txrdy_irq";
+   var.value = NULL;
+
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+      LynxComTxRdyIRQ = (strcmp(var.value, "enabled") == 0);
 }
 
 #define MAX_PLAYERS 2
 #define MAX_BUTTONS 9
 static uint8_t input_buf[MAX_PLAYERS * 2];
+static unsigned input_device[MAX_PLAYERS] = { RETRO_DEVICE_JOYPAD, RETRO_DEVICE_JOYPAD };
 
 static bool MDFNI_LoadGame(const uint8_t *data, size_t size)
 {
@@ -239,6 +262,9 @@ bool retro_load_game(const struct retro_game_info *info)
    if (!info)
       return false;
 
+   /* Port 1 drives the left screen, port 2 the right one.  Only port 1 carries
+    * the rotation key: it turns the whole surface, both machines at once, so it
+    * belongs to the screen rather than to either player. */
    struct retro_input_descriptor desc[] = {
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,  "D-Pad Left" },
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,    "D-Pad Up" },
@@ -250,6 +276,16 @@ bool retro_load_game(const struct retro_game_info *info)
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R,     "Opt 2" },
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Option" },
       { 0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Rotate Screen and D-Pad" },
+
+      { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,  "D-Pad Left" },
+      { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,    "D-Pad Up" },
+      { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN,  "D-Pad Down" },
+      { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "D-Pad Right" },
+      { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B,     "A" },
+      { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A,     "B" },
+      { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L,     "Opt 1" },
+      { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R,     "Opt 2" },
+      { 1, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Option" },
       { 0 },
    };
 
@@ -260,6 +296,16 @@ bool retro_load_game(const struct retro_game_info *info)
 
    if (!init_pix_format())
       log_cb(RETRO_LOG_ERROR, "Unable to initialize pixel format. Aborting.\n");
+
+   rotate_mode = 0;
+   rotate_fixed = 0;
+   rotate_screen = 0;
+   select_pressed_last_frame = 0;
+   rotate_screen_last_frame = 0;
+
+   /* Before the machines exist: the transmit interrupt option also picks how
+    * far apart they start, and Load() applies that once. */
+   check_variables();
 
    if (!MDFNI_LoadGame((const uint8_t *)info->data, info->size))
       return false;
@@ -287,14 +333,6 @@ bool retro_load_game(const struct retro_game_info *info)
       machine[i]->DisplaySetAttributes(surf->bpp);
       SetInput(i, "gamepad", &input_buf[i * 2]);
    }
-
-   rotate_mode = 0;
-   rotate_fixed = 0;
-   rotate_screen = 0;
-   select_pressed_last_frame = 0;
-   rotate_screen_last_frame = 0;
-
-   check_variables();
 
    return true;
 }
@@ -376,6 +414,13 @@ static void update_input(void)
    for (unsigned port = 0; port < MAX_PLAYERS; port++)
    {
       uint16_t input_state = 0;
+
+      if (input_device[port] == RETRO_DEVICE_NONE)
+      {
+         input_buf[port * 2 + 0] = 0;
+         input_buf[port * 2 + 1] = 0;
+         continue;
+      }
 
       if (libretro_supports_input_bitmasks)
       {
@@ -528,11 +573,34 @@ unsigned retro_api_version(void)
    return RETRO_API_VERSION;
 }
 
-void retro_set_controller_port_device(unsigned in_port, unsigned device) {}
+void retro_set_controller_port_device(unsigned in_port, unsigned device)
+{
+   if (in_port >= MAX_PLAYERS)
+      return;
+
+   /* RETRO_DEVICE_NONE leaves that machine's buttons released -- it is still
+    * emulated and still on the link, which is what an unattended second Lynx
+    * is.  Anything else is treated as the pad, since that is all a Lynx has. */
+   input_device[in_port] = (device == RETRO_DEVICE_NONE)
+      ? RETRO_DEVICE_NONE : RETRO_DEVICE_JOYPAD;
+}
 
 void retro_set_environment(retro_environment_t cb)
 {
+   static const struct retro_controller_description pad[] = {
+      { "Lynx Pad", RETRO_DEVICE_JOYPAD },
+      { NULL, 0 },
+   };
+
+   static const struct retro_controller_info ports[] = {
+      { pad, 1 },   /* machine 1, left screen */
+      { pad, 1 },   /* machine 2, right screen */
+      { NULL, 0 },
+   };
+
    environ_cb = cb;
+
+   environ_cb(RETRO_ENVIRONMENT_SET_CONTROLLER_INFO, (void*)ports);
 
    struct retro_vfs_interface_info vfs_iface_info = {
       2,
