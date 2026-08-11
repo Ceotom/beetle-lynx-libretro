@@ -37,7 +37,7 @@ libdir := $(prefix)/lib
 
 LIBRETRO_DIR := libretro
 
-TARGET_NAME := mednafen_lynx
+TARGET_NAME := mednafen_lynx_com
 GIT_VERSION := " $(shell git rev-parse --short HEAD || echo unknown)"
 ifneq ($(GIT_VERSION)," unknown")
 	CXXFLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\"

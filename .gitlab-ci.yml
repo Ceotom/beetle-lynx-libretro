@@ -8,7 +8,7 @@
 .core-defs:
   variables:
     JNI_PATH: .
-    CORENAME: mednafen_lynx
+    CORENAME: mednafen_lynx_com
 
 # Inclusion templates, required for the build to work
 include:

@@ -52,9 +52,9 @@ static int system_color_depth = 16;
 extern MDFNGI EmulatedLynx;
 MDFNGI *MDFNGameInfo = &EmulatedLynx;
 
-#define MEDNAFEN_CORE_NAME_MODULE "lynx"
-#define MEDNAFEN_CORE_NAME "Beetle Lynx"
-#define MEDNAFEN_CORE_VERSION "v1.24.0"
+#define MEDNAFEN_CORE_NAME_MODULE "lynx_com"
+#define MEDNAFEN_CORE_NAME "Beetle Lynx-Com"
+#define MEDNAFEN_CORE_VERSION "v1.24.0-comlynx"
 #define MEDNAFEN_CORE_EXTENSIONS "lnx|lyx|bll|o"
 #define MEDNAFEN_CORE_TIMING_FPS 75.0
 #define MEDNAFEN_CORE_GEOMETRY_BASE_W 160

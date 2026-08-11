@@ -29,5 +29,5 @@ jobs:
       if: ${{ success() }}
       uses: actions/upload-artifact@v2
       with:
-        name: mednafen_lynx_libretro_ps2-${{ steps.slug.outputs.sha8 }}
-        path: mednafen_lynx_libretro_ps2.a
+        name: mednafen_lynx_com_libretro_ps2-${{ steps.slug.outputs.sha8 }}
+        path: mednafen_lynx_com_libretro_ps2.a
