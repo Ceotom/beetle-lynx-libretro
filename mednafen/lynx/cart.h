@@ -103,7 +103,7 @@ class CCart : public CLynxBase
 		uint32	CartGetRotate(void) { return mRotation;};
 		uint32	CRC32(void) { return mCRC32; };
 
-		int StateAction(StateMem *sm, int load, int data_only);
+		int StateAction(StateMem *sm, int load, int data_only, const char* sname_prefix = "");
 
 // Access for the lynx itself, it has no idea of address etc as this is done by the
 // cartridge emulation hardware 

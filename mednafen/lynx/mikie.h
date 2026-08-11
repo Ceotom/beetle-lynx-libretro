@@ -182,8 +182,9 @@ class CMikie : public CLynxBase
 		void	ComLynxCable(int status);
 		void	ComLynxRxData(int data);
 		void	ComLynxTxLoopback(int data);
+		void	UartTxStart(uint32 frame);
 		void	ComLynxTxCallback(void (*function)(int data,uint32 objref),uint32 objref);
-		
+
 		void	DisplaySetAttributes(int32 bpp);
 		
 		void	BlowOut(void);
@@ -191,7 +192,7 @@ class CMikie : public CLynxBase
 		uint32	DisplayRenderLine(void);
 		uint32	DisplayEndOfFrame(void);
 
-		int StateAction(StateMem *sm, int load, int data_only);
+		int StateAction(StateMem *sm, int load, int data_only, const char* sname_prefix = "");
 
 		inline void SetCPUSleep(void) {gSystemCPUSleep=true;};
 		inline void ClearCPUSleep(void) {gSystemCPUSleep=false;};
@@ -352,6 +353,24 @@ class CMikie : public CLynxBase
 
 		uint32		mUART_SENDBREAK;
 		uint32		mUART_TX_DATA;
+
+		// The transmitter is two deep.  A SERDAT write lands in the holding
+		// register; the moment the shift register is free it takes the byte
+		// and starts clocking it out, which frees the holding register again.
+		// SERCTL reports the two separately -- B7 TXRDY says the holding
+		// register will take a byte, B5 TXEMPTY says holding and shift are
+		// both idle -- so a program writing on TXRDY keeps one byte queued
+		// ahead and the bytes leave back to back with no gap between them.
+		// Handy had a single stage and reported both bits off it, which put
+		// a whole byte frame between every pair of bytes and halved the rate
+		// a program could sustain.
+		//
+		// The transmit interrupt still fires on TXEMPTY, not TXRDY, so a
+		// program driven by the interrupt rather than by polling sees the
+		// old pacing.  Deliberate; the reasoning is at the interrupt itself
+		// in Update().
+		uint32		mUART_TX_Holding;
+		uint32		mUART_TX_HoldingFull;
 		uint32		mUART_RX_DATA;
 		uint32		mUART_RX_READY;
 
@@ -379,6 +398,93 @@ class CMikie : public CLynxBase
 		uint32		mLynxAddr;
 
 		void CopyLineSurface(int32 bpp);
+
+	public:
+		// Column this machine's 160-pixel-wide picture starts at; 0 for a
+		// lone Lynx, 0 and 160 for the two halves of a ComLynx pair.
+		// Deliberately last, so adding it leaves every other member's
+		// offset -- and therefore the generated code -- untouched.
+		uint32		mpDisplayXOffset;
+
+		// Last sample level handed to the synth, kept so only deltas get
+		// pushed.  These were function-local statics in
+		// CombobulateSound(), which two machines running in one process
+		// would have shared -- each one emitting deltas measured against
+		// the other's output.  Not part of the saved state: nothing in
+		// the emulated machine can observe them, they only shape what
+		// lands in the audio buffer.
+		int		mAudioLastLSample;
+		int		mAudioLastRSample;
+
+		// Bit times inserted between one queued receive and the next, on
+		// top of the byte frame itself.  Handy hardwired 44 of them
+		// (UART_RX_NEXT_DELAY), which caps sustained reception at a fifth
+		// of the line rate -- harmless when the only source of queued
+		// bytes was the machine's own loopback, ruinous once a real
+		// partner is on the wire and the queue grows every frame it
+		// cannot drain.  A module with a link sets this to 0.  Set from
+		// the driving code, not by the emulated machine, so it is a
+		// constructor value and not part of the saved state -- same
+		// reasoning as mpDisplayXOffset.
+		uint32		mUART_RX_NextDelay;
+
+		// Which of the two transmit conditions raises the transmit interrupt.
+		// False, the default, is Handy's: TXEMPTY, the shift register going
+		// idle.  True is TXRDY, the holding register freeing -- what the
+		// specification's wording for the interrupt reads as, and a whole byte
+		// frame earlier once the transmitter is two deep.
+		//
+		// A property of the driving code, like mUART_RX_NextDelay above:
+		// a constructor value, not part of the saved state.
+		bool		mUART_TX_IRQ_OnHolding;
+
+		// Receive-side link state, for code driving several machines.
+		// ComLynxRxData() drops a byte without a word once the 32-entry
+		// queue is full, and that is the one way a delivered byte can
+		// vanish -- nothing else on this class would ever show it.
+		int	ComLynxRxWaiting(void) const { return mUART_Rx_waiting; }
+		int	ComLynxRxOverrun(void) const { return mUART_Rx_overun_error; }
+		// Raised when two machines put a byte on the wire at once.  Nothing in
+		// this core has ever set it -- only cleared it, on RESETERR -- so the
+		// one signal ComLynx offers for sensing a collision has always read
+		// clean.  The program clears it the same way it clears the others.
+		void	ComLynxRxFramingError(void) { mUART_Rx_framing_error = 1; }
+		void	ComLynxRxNextDelay(uint32 bits) { mUART_RX_NextDelay = bits; }
+		void	ComLynxTxIRQOnHolding(bool on) { mUART_TX_IRQ_OnHolding = on; }
+
+		// Transmit-side link state, for code that has to model the wire and
+		// not just the two ends of it.  ComLynx is a single line: one byte is
+		// shifting out on it at a time, and a machine that starts one while
+		// another is mid-byte is not something a working protocol on that wire
+		// ever does.  The countdown says whether this machine is shifting a
+		// byte out and how much of it is left, in bit times; adding to it keeps
+		// TxDone -- and with it the transmit interrupt -- withheld for that
+		// much longer, which is how a sender is made to wait its turn.
+		uint32	ComLynxTxCountdown(void) const { return (mUART_TX_COUNTDOWN & UART_TX_INACTIVE) ? 0 : mUART_TX_COUNTDOWN; }
+		void	ComLynxTxDelay(uint32 bits) { if(!(mUART_TX_COUNTDOWN & UART_TX_INACTIVE)) mUART_TX_COUNTDOWN += bits; }
+
+// Define together with LYNXCOM_TEST_STATE to let the state test overwrite the
+// display position on purpose before it loads a state back.  All of it is
+// carried from one frame to the next and is private, so the test cannot reach
+// it from outside; a state that restores all of it survives this untouched,
+// and one that does not diverges and fails.  Off by default, and when it is off
+// the method does not exist.
+//
+// The caller passes values a running machine could actually hold -- a line
+// inside the screen, a counter inside a frame's worth of lines.  Handing it
+// nonsense instead has DisplayRenderLine paint lines until the process dies,
+// which answers no question about save states.
+//#define LYNX_TEST_POISON	1
+#ifdef LYNX_TEST_POISON
+		void	PoisonDisplay(uint32 line, uint32 dma_counter, uint32 addr)
+		{
+			mLynxLine = line;
+			mLynxLineDMACounter = dma_counter;
+			mLynxAddr = addr;
+			mpDisplayCurrentLine = line;
+			mIODAT_REST_SIGNAL = line & 1;
+		}
+#endif
 };
 
 

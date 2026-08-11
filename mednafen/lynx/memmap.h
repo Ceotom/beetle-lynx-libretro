@@ -63,7 +63,7 @@ class CMemMap : public CLynxBase
 		uint32	ReadCycle(void) {return 5;};
 		uint32	WriteCycle(void) {return 5;};
 		uint32	ObjectSize(void) {return MEMMAP_SIZE;};
-		int	StateAction(StateMem *sm, int load, int data_only);
+		int	StateAction(StateMem *sm, int load, int data_only, const char* sname_prefix = "");
 
 	// Data members
 

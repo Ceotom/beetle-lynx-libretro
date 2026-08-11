@@ -63,9 +63,9 @@
 //#define CPU_PEEKW(m)			(mSystem.PeekW_CPU(m))
 //#define CPU_POKE(m1,m2)			(mSystem.Poke_CPU(m1,m2))
 
-#define CPU_PEEK(m)				(((m<0xfc00)?mRamPointer[m]:mSystem.Peek_CPU(m)))
-#define CPU_PEEKW(m)			(((m<0xfc00)?(mRamPointer[m]+(mRamPointer[m+1]<<8)):mSystem.PeekW_CPU(m)))
-#define CPU_POKE(m1,m2)			{if(m1<0xfc00) mRamPointer[m1]=m2; else mSystem.Poke_CPU(m1,m2);}
+#define CPU_PEEK(m)				(((uint16)(m)<0xfc00)?mRamPointer[(uint16)(m)]:mSystem.Peek_CPU((uint16)(m)))
+#define CPU_PEEKW(m)			(((uint16)(m)<0xfc00)?(mRamPointer[(uint16)(m)]+(mRamPointer[(uint16)(m)+1]<<8)):mSystem.PeekW_CPU((uint16)(m)))
+#define CPU_POKE(m1,m2)			{if((uint16)(m1)<0xfc00) mRamPointer[(uint16)(m1)]=m2; else mSystem.Poke_CPU((uint16)(m1),m2);}
 
 
 enum {	illegal=0,
@@ -155,9 +155,10 @@ class C65C02
 			gSystemCPUSleep=false;
 		}
 
-                inline 	int StateAction(StateMem *sm, int load, int data_only)
+                inline 	int StateAction(StateMem *sm, int load, int data_only, const char* sname_prefix = "")
                 {
 			uint8 mPS;
+			char section_name[64];
 
 			SFORMAT CPURegs[] =
 			{
@@ -170,7 +171,9 @@ class C65C02
 	                        mPS=PS();
 			}
 
-			MDFNSS_StateAction(sm, load, data_only, CPURegs, "CPU", false);
+			snprintf(section_name, sizeof(section_name), "%sCPU", sname_prefix);
+
+			MDFNSS_StateAction(sm, load, data_only, CPURegs, section_name, false);
 			if(load)
 			{
 				PS(mPS);

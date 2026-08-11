@@ -179,7 +179,7 @@ INLINE uint8 CMemMap::Peek(uint32 addr)
 	return retval;
 }
 
-int CMemMap::StateAction(StateMem *sm, int load, int data_only)
+int CMemMap::StateAction(StateMem *sm, int load, int data_only, const char* sname_prefix)
 {
  SFORMAT MemMapRegs[] =
  {
@@ -190,7 +190,11 @@ int CMemMap::StateAction(StateMem *sm, int load, int data_only)
 	SFEND
  };
 
- int ret = MDFNSS_StateAction(sm, load, data_only, MemMapRegs, "MMAP", false);
+ char section_name[64];
+
+ snprintf(section_name, sizeof(section_name), "%sMMAP", sname_prefix);
+
+ int ret = MDFNSS_StateAction(sm, load, data_only, MemMapRegs, section_name, false);
 
  if(load)
  {

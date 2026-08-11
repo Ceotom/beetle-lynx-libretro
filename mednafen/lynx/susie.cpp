@@ -1862,7 +1862,7 @@ uint8 CSusie::Peek(uint32 addr)
 	return 0xff;
 }
 
-int CSusie::StateAction(StateMem *sm, int load, int data_only)
+int CSusie::StateAction(StateMem *sm, int load, int data_only, const char* sname_prefix)
 {
  SFORMAT SuzieRegs[] =
  {
@@ -1955,7 +1955,11 @@ int CSusie::StateAction(StateMem *sm, int load, int data_only)
 	SFEND
  };
 
- int ret = MDFNSS_StateAction(sm, load, data_only, SuzieRegs, "SUZY", false);
+ char section_name[64];
+
+ snprintf(section_name, sizeof(section_name), "%sSUZY", sname_prefix);
+
+ int ret = MDFNSS_StateAction(sm, load, data_only, SuzieRegs, section_name, false);
 
  return(ret);
 }

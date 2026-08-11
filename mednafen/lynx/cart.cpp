@@ -518,7 +518,7 @@ uint8 CCart::Peek1(void)
 }
 
 
-int CCart::StateAction(StateMem *sm, int load, int data_only)
+int CCart::StateAction(StateMem *sm, int load, int data_only, const char* sname_prefix)
 {
  SFORMAT CartRegs[] =
  {
@@ -537,6 +537,10 @@ int CCart::StateAction(StateMem *sm, int load, int data_only)
 	SFARRAYN(mCartBank1, mCartRAM ? mMaskBank1 + 1 : 0, "mCartBank1"),
 	SFEND
  };
- return MDFNSS_StateAction(sm, load, data_only, CartRegs, "CART", false);
+ char section_name[64];
+
+ snprintf(section_name, sizeof(section_name), "%sCART", sname_prefix);
+
+ return MDFNSS_StateAction(sm, load, data_only, CartRegs, section_name, false);
 }
 

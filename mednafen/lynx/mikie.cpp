@@ -66,6 +66,16 @@ CMikie::CMikie(CSystem& parent)
 	mpDisplayCurrent=NULL;
 	mpRamPointer=NULL;
 
+	// Set by the driving code rather than by the emulated machine, so they
+	// belong here and not in Reset(): a reset must not unplug the cable or
+	// move a screen.
+	mpDisplayXOffset=0;
+	mUART_RX_NextDelay=UART_RX_NEXT_DELAY;
+	mUART_TX_IRQ_OnHolding=false;
+
+	mAudioLastLSample=0;
+	mAudioLastRSample=0;
+
 	mUART_CABLE_PRESENT=false;
 	mpUART_TX_CALLBACK=NULL;
 
@@ -254,6 +264,8 @@ void CMikie::Reset(void)
 
 	mUART_SENDBREAK=0;
 	mUART_TX_DATA=0;
+	mUART_TX_Holding=0;
+	mUART_TX_HoldingFull=0;
 	mUART_RX_DATA=0;
 	mUART_RX_READY=0;
 
@@ -341,11 +353,35 @@ void CMikie::ComLynxTxLoopback(int data)
 		// we NEVER get to receive it!!!
 		if(!mUART_Rx_waiting) mUART_RX_COUNTDOWN=UART_RX_TIME_PERIOD;
 
-		// Receive the byte - INSERT into front of queue
-		mUART_Rx_output_ptr = (mUART_Rx_output_ptr - 1) % UART_MAX_RX_QUEUE;
-		mUART_Rx_input_queue[mUART_Rx_output_ptr]=data;
+		// Queue the echo behind whatever already arrived, rather than in
+		// front of it.  Handy pushed it to the head, which on a lone console
+		// was invisible -- the echo was the only traffic there ever was.
+		// With a partner on the wire it reorders the stream: a byte this
+		// machine sends jumps ahead of one the partner sent earlier, and a
+		// protocol that reads its own echo to pace itself sees the two
+		// interleaved wrongly.
+		mUART_Rx_input_queue[mUART_Rx_input_ptr]=data;
+		mUART_Rx_input_ptr = (mUART_Rx_input_ptr + 1) % UART_MAX_RX_QUEUE;
 		mUART_Rx_waiting++;
 	}
+}
+
+//
+// Start clocking a frame out of the shift register.  The byte goes on the wire
+// at the moment transmission *starts*, not when it finishes: the receiver's own
+// queue already models the byte frame, so handing it over at the end would
+// charge that time twice.
+//
+void CMikie::UartTxStart(uint32 frame)
+{
+	mUART_TX_DATA=frame;
+	mUART_TX_COUNTDOWN=UART_TX_TIME_PERIOD;
+
+	// ComLynx only has one output pin, hence Rx & Tx are shorted, so a machine
+	// always hears itself.
+	ComLynxTxLoopback(mUART_TX_DATA);
+
+	if(mpUART_TX_CALLBACK) (*mpUART_TX_CALLBACK)(mUART_TX_DATA,mUART_TX_CALLBACK_OBJECT);
 }
 
 void CMikie::ComLynxTxCallback(void (*function)(int data,uint32 objref),uint32 objref)
@@ -399,7 +435,7 @@ void CMikie::CopyLineSurface(int32 bpp)
 	{
 	case 16:
 	{
-		uint16 *bitmap_tmp = mpDisplayCurrent->pixels + mpDisplayCurrentLine * mpDisplayCurrent->pitch;
+		uint16 *bitmap_tmp = mpDisplayCurrent->pixels + mpDisplayCurrentLine * mpDisplayCurrent->pitch + mpDisplayXOffset;
 		for (uint32 loop = 0; loop < SCREEN_WIDTH / 2; loop++)
 		{
 			uint32 source = mpRamPointer[(uint16)mLynxAddr];
@@ -424,7 +460,7 @@ void CMikie::CopyLineSurface(int32 bpp)
 	}
 	case 32:
 	{
-		uint32 *bitmap_tmp = (uint32 *)mpDisplayCurrent->pixels + mpDisplayCurrentLine * mpDisplayCurrent->pitch;
+		uint32 *bitmap_tmp = (uint32 *)mpDisplayCurrent->pixels + mpDisplayCurrentLine * mpDisplayCurrent->pitch + mpDisplayXOffset;
 		for (uint32 loop = 0; loop < SCREEN_WIDTH / 2; loop++)
 		{
 			uint32 source = mpRamPointer[(uint16)mLynxAddr];
@@ -720,36 +756,53 @@ void CMikie::Poke(uint32 addr,uint8 data)
 			break;
 
 
-		case (TIM0CNT&0xff): 
+		// Writing a counter restarts that timer's clock as well as loading it.
+		// mTIM_x_LAST_COUNT is when the timer last ticked, and Update() decides
+		// how many ticks are owed from the distance to it -- so leaving it alone
+		// meant a freshly loaded counter was immediately charged for however
+		// long the timer had been sitting idle, and a timer loaded with a small
+		// value expired on the spot.  For Gauntlet that is the timer delimiting
+		// received packets: it fired the instant the handler armed it, cutting
+		// every packet into single bytes, which is why the pair kept assembling
+		// and dying.
+		case (TIM0CNT&0xff):
 			mTIM_0_CURRENT=data;
+			mTIM_0_LAST_COUNT=gSystemCycleCount;
 			gNextTimerEvent=gSystemCycleCount;
 			break;
-		case (TIM1CNT&0xff): 
+		case (TIM1CNT&0xff):
 			mTIM_1_CURRENT=data;
+			mTIM_1_LAST_COUNT=gSystemCycleCount;
 			gNextTimerEvent=gSystemCycleCount;
 			break;
-		case (TIM2CNT&0xff): 
+		case (TIM2CNT&0xff):
 			mTIM_2_CURRENT=data;
+			mTIM_2_LAST_COUNT=gSystemCycleCount;
 			gNextTimerEvent=gSystemCycleCount;
 			break;
-		case (TIM3CNT&0xff): 
+		case (TIM3CNT&0xff):
 			mTIM_3_CURRENT=data;
+			mTIM_3_LAST_COUNT=gSystemCycleCount;
 			gNextTimerEvent=gSystemCycleCount;
 			break;
-		case (TIM4CNT&0xff): 
+		case (TIM4CNT&0xff):
 			mTIM_4_CURRENT=data;
+			mTIM_4_LAST_COUNT=gSystemCycleCount;
 			gNextTimerEvent=gSystemCycleCount;
 			break;
-		case (TIM5CNT&0xff): 
+		case (TIM5CNT&0xff):
 			mTIM_5_CURRENT=data;
+			mTIM_5_LAST_COUNT=gSystemCycleCount;
 			gNextTimerEvent=gSystemCycleCount;
 			break;
-		case (TIM6CNT&0xff): 
+		case (TIM6CNT&0xff):
 			mTIM_6_CURRENT=data;
+			mTIM_6_LAST_COUNT=gSystemCycleCount;
 			gNextTimerEvent=gSystemCycleCount;
 			break;
-		case (TIM7CNT&0xff): 
+		case (TIM7CNT&0xff):
 			mTIM_7_CURRENT=data;
+			mTIM_7_LAST_COUNT=gSystemCycleCount;
 			gNextTimerEvent=gSystemCycleCount;
 			break;
 
@@ -890,9 +943,7 @@ void CMikie::Poke(uint32 addr,uint8 data)
 			if(mUART_SENDBREAK)
 			{
 				// Trigger send break, it will self sustain as long as sendbreak is set
-				mUART_TX_COUNTDOWN=UART_TX_TIME_PERIOD;
-				// Loop back what we transmitted
-				ComLynxTxLoopback(UART_BREAK_CODE);
+				UartTxStart(UART_BREAK_CODE);
 			}
 			break;
 
@@ -903,22 +954,45 @@ void CMikie::Poke(uint32 addr,uint8 data)
 			// ComLynx only has one output pin, hence Rx & Tx are shorted
 			// therefore any transmitted data will loopback
 			//
-			mUART_TX_DATA=data;
+			{
+			uint32 frame=data;
+
 			// Calculate Parity data
 			if(mUART_PARITY_ENABLE)
 			{
-				// Calc parity value
-				// Leave at zero !!
+				// Handy left this at zero, so the ninth bit carried no
+				// information and a receiver checking parity saw every byte
+				// come in the same way.
+				unsigned p = data ^ (data >> 4);
+
+				p ^= p >> 2;
+				p ^= p >> 1;
+
+				// Note the polarity: PAREVEN set *inverts* the sense, which
+				// looks backwards and is.  The hardware computes parity over
+				// the nine bits including the parity bit itself, so what it
+				// emits for "even" is what arithmetic calls odd.  Faithful to
+				// the chip rather than to the register's name.
+				if(mUART_PARITY_EVEN) p ^= 1;
+
+				if(p) frame|=0x0100;
 			}
 			else
 			{
 				// If disabled then the PAREVEN bit is sent
-				if(mUART_PARITY_EVEN) data|=0x0100;
+				if(mUART_PARITY_EVEN) frame|=0x0100;
 			}
-			// Set countdown to transmission
-			mUART_TX_COUNTDOWN=UART_TX_TIME_PERIOD;
-			// Loop back what we transmitted
-			ComLynxTxLoopback(mUART_TX_DATA);
+
+			if(mUART_TX_COUNTDOWN&UART_TX_INACTIVE)
+				UartTxStart(frame);
+			else
+			{
+				// Shift register still busy, so the byte waits in the holding
+				// register and leaves the moment the current one is done.
+				mUART_TX_Holding=frame;
+				mUART_TX_HoldingFull=1;
+			}
+			}
 			break;
 
 		case (SDONEACK&0xff):
@@ -1304,7 +1378,15 @@ uint8 CMikie::Peek(uint32 addr)
 		case (SERCTL&0xff): 
 			{
 				uint32 retval=0;
-				retval|=(mUART_TX_COUNTDOWN&UART_TX_INACTIVE)?0xA0:0x00;	// Indicate TxDone & TxAllDone
+				// B7 TXRDY: the holding register will take a byte, which it
+				// will as soon as it is empty -- whether or not the shift
+				// register is still clocking one out.
+				if(!mUART_TX_HoldingFull) retval|=0x80;
+				// B5 TXEMPTY: holding and shift both idle.  Handy reported
+				// both bits off the one countdown, so a program polling TXRDY
+				// could never keep a byte queued and every pair of bytes had
+				// a whole frame of silence between them.
+				if((mUART_TX_COUNTDOWN&UART_TX_INACTIVE) && !mUART_TX_HoldingFull) retval|=0x20;
 				retval|=(mUART_RX_READY)?0x40:0x00;							// Indicate Rx data ready
 				retval|=(mUART_Rx_overun_error)?0x08:0x0;					// Framing error
 				retval|=(mUART_Rx_framing_error)?0x04:0x00;					// Rx overrun
@@ -1323,7 +1405,14 @@ uint8 CMikie::Peek(uint32 addr)
 				uint32 retval=0;
 				retval|=(mIODIR&0x10)?mIODAT&0x10:0x10;									// IODIR  = output bit : input high (eeprom write done)
 				retval|=(mIODIR&0x08)?(((mIODAT&0x08)&&mIODAT_REST_SIGNAL)?0x00:0x08):0x00;									// REST   = output bit : input low
-				retval|=(mIODIR&0x04)?mIODAT&0x04:((mUART_CABLE_PRESENT)?0x04:0x00);	// NOEXP  = output bit : input low
+				// NOEXP reads "no expansion": set means nothing is plugged into
+				// the ComLynx socket.  Handy had the sense the other way round,
+				// which never showed because it hardwired mUART_CABLE_PRESENT
+				// to false and so only ever took the other branch -- plugging
+				// the cable in lit up a path that had never run.  The old sense
+				// also had a bare console, cable or no cable, reporting that
+				// something was plugged into it.
+				retval|=(mIODIR&0x04)?mIODAT&0x04:((mUART_CABLE_PRESENT)?0x00:0x04);	// NOEXP  = output bit : input
 				retval|=(mIODIR&0x02)?mIODAT&0x02:0x00;									// CARTAD = output bit : input low
 				retval|=(mIODIR&0x01)?mIODAT&0x01:0x01;									// EXTPW  = output bit : input high (Power connected)
 				return (uint8)retval;
@@ -1418,7 +1507,7 @@ uint8 CMikie::Peek(uint32 addr)
 }
 
 
-int CMikie::StateAction(StateMem *sm, int load, int data_only)
+int CMikie::StateAction(StateMem *sm, int load, int data_only, const char* sname_prefix)
 {
  SFORMAT MikieRegs[] =
  {
@@ -1620,15 +1709,53 @@ int CMikie::StateAction(StateMem *sm, int load, int data_only)
 
         SFVAR(mUART_SENDBREAK),
         SFVAR(mUART_TX_DATA),
+        SFVAR(mUART_TX_Holding),
+        SFVAR(mUART_TX_HoldingFull),
         SFVAR(mUART_RX_DATA),
         SFVAR(mUART_RX_READY),
 
         SFVAR(mUART_PARITY_ENABLE),
         SFVAR(mUART_PARITY_EVEN),
+
+	// ComLynx link state.  Never saved before, because nothing ever
+	// attached a cable; a linked pair desynchronizes without it, on load
+	// state, rewind and netplay alike.
+	SFVAR(mUART_CABLE_PRESENT),
+	SFARRAY32N(mUART_Rx_input_queue, UART_MAX_RX_QUEUE, "mUART_Rx_input_queue"),
+	SFVAR(mUART_Rx_input_ptr),
+	SFVAR(mUART_Rx_output_ptr),
+	SFVAR(mUART_Rx_waiting),
+	SFVAR(mUART_Rx_framing_error),
+	SFVAR(mUART_Rx_overun_error),
+
+	// Where the display DMA has got to.  A single Lynx is always between
+	// frames when a state is taken -- DisplayEndOfFrame() has just reset
+	// the first two and nothing has restarted them -- so leaving these out
+	// cost nothing and they were never saved.  Machine 2 of a ComLynx pair
+	// is never between frames at that moment: its picture straddles the
+	// host's frame boundary by design, so it is saved mid-screen with a line
+	// count, a DMA counter and a framebuffer pointer that all still matter.
+	//
+	// And they matter to more than the picture.  mLynxLineDMACounter gates
+	// the 80 RAM accesses a rendered line costs (DisplayRenderLine), so a
+	// machine restored with the wrong one runs at the wrong speed and drags
+	// the link off with it, and mLynxLine drives the REST signal the program
+	// can read back through IODAT.
+	SFVAR(mpDisplayCurrentLine),
+	SFVAR(mLynxLine),
+	SFVAR(mLynxLineDMACounter),
+	SFVAR(mLynxAddr),
+
 	SFEND
 	};
 
-	int ret = MDFNSS_StateAction(sm, load, data_only, MikieRegs, "MIKY", false);
+	// The state section namespace is flat, so a driver running more than one
+	// machine has to keep their sections apart.  "%s<NAME>" and not
+	// "%s_<NAME>", so that an empty prefix gives exactly the old name.
+	char section_name[64];
+	snprintf(section_name, sizeof(section_name), "%sMIKY", sname_prefix);
+
+	int ret = MDFNSS_StateAction(sm, load, data_only, MikieRegs, section_name, false);
 
 	if(load)
 	{
@@ -1643,8 +1770,10 @@ void CMikie::CombobulateSound(uint32 teatime)
 {
                                 int cur_lsample = 0;
                                 int cur_rsample = 0;
-                                static int last_lsample = 0;
-                                static int last_rsample = 0;
+                                // Members, not function statics: two machines
+                                // in one process must not share them.
+                                int& last_lsample = mAudioLastLSample;
+                                int& last_rsample = mAudioLastRSample;
                                 int x;
 
                                 teatime >>= 2;
@@ -1979,7 +2108,7 @@ void CMikie::Update(void)
 
 							// Retrigger input if more bytes waiting
 							if(mUART_Rx_waiting>0)
-								mUART_RX_COUNTDOWN=UART_RX_TIME_PERIOD+UART_RX_NEXT_DELAY;
+								mUART_RX_COUNTDOWN=UART_RX_TIME_PERIOD+mUART_RX_NextDelay;
 							else
 								mUART_RX_COUNTDOWN=UART_RX_INACTIVE;
 
@@ -1999,22 +2128,23 @@ void CMikie::Update(void)
 						{
 							if(mUART_SENDBREAK)
 							{
-								mUART_TX_DATA=UART_BREAK_CODE;
 								// Auto-Respawn new transmit
-								mUART_TX_COUNTDOWN=UART_TX_TIME_PERIOD;
-								// Loop back what we transmitted
-								ComLynxTxLoopback(mUART_TX_DATA);
+								UartTxStart(UART_BREAK_CODE);
+							}
+							else if(mUART_TX_HoldingFull)
+							{
+								// The shift register is free and the program
+								// already queued the next byte, so it follows
+								// this one with no gap -- which is the whole
+								// point of the holding register.
+								mUART_TX_HoldingFull=0;
+								UartTxStart(mUART_TX_Holding);
 							}
 							else
 							{
-								// Serial activity finished 
+								// Serial activity finished
 								mUART_TX_COUNTDOWN=UART_TX_INACTIVE;
 							}
-
-							// If a networking object is attached then use its callback to send the data byte.
-							if(mpUART_TX_CALLBACK)
-								(*mpUART_TX_CALLBACK)(mUART_TX_DATA,mUART_TX_CALLBACK_OBJECT);
-
 						}
 						else if(!(mUART_TX_COUNTDOWN&UART_TX_INACTIVE))
 						{
@@ -2080,7 +2210,24 @@ void CMikie::Update(void)
 
 			// If Tx is inactive i.e ready for a byte to eat and the
 			// IRQ is enabled then generate it always
-			if((mUART_TX_COUNTDOWN&UART_TX_INACTIVE) && mUART_TX_IRQ_ENABLE)
+
+			// Which condition this is, TXEMPTY or TXRDY, is the driving
+			// code's to choose; see mUART_TX_IRQ_OnHolding.  The
+			// specification separates the two status bits and words the
+			// interrupt as "its UART buffer is ready", which reads as TXRDY,
+			// and Handy used TXEMPTY.  Once the transmitter is two deep the
+			// difference is a whole byte frame: on TXEMPTY a program is told
+			// the transmitter is free only after the byte has fully gone, so
+			// it can never keep the next one queued, and a burst costs one
+			// interrupt at the end instead of one per byte.
+			//
+			// It is not a free correction, which is why it is a choice and
+			// why the default is Handy's.  California Games needs TXRDY and
+			// nothing else moves it, but lifting the ceiling multiplies every
+			// game's traffic two to four times, and a whole-library sweep put
+			// Hockey, Zarlor Mercenary and Basketbrawl into the ground with
+			// it.  Thirty-one games do not want this.
+			if((mUART_TX_IRQ_OnHolding ? !mUART_TX_HoldingFull : ((mUART_TX_COUNTDOWN&UART_TX_INACTIVE)!=0)) && mUART_TX_IRQ_ENABLE)
 				mTimerStatusFlags|=0x10;
 			// Is data waiting and the interrupt enabled, if so then
 			// what are we waiting for....

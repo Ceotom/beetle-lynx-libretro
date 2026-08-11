@@ -119,6 +119,11 @@ class CSystem : public CSystemBase
 	public:
 		void	Reset(void) MDFN_COLD;
 
+		// Serializes this machine's whole state, including the file-scope
+		// globals -- which means the caller must have made those globals
+		// belong to this machine first, if more than one exists.
+		int	StateAction(StateMem *sm, int load, int data_only, const char* sname_prefix = "");
+
 		inline void Update(void)
 		{
 			// Only update if there is a predicted timer event
@@ -130,7 +135,20 @@ class CSystem : public CSystemBase
 
 			// If the CPU is asleep then skip to the next timer event
 			if(gSystemCPUSleep)
-				gSystemCycleCount=gNextTimerEvent;
+			{
+				// ...but no further than code driving several linked
+				// machines will allow, or one machine leaps thousands of
+				// cycles past the other in a single step and the link
+				// loses its timing.  Splitting the skip changes nothing:
+				// until gNextTimerEvent is reached Mikie is not updated
+				// and a sleeping CPU returns immediately, so the machine
+				// still arrives at exactly the same place, just in more
+				// steps.
+				if(mSleepAdvanceLimit && gNextTimerEvent > gSystemCycleCount && (gNextTimerEvent - gSystemCycleCount) > mSleepAdvanceLimit)
+					gSystemCycleCount+=mSleepAdvanceLimit;
+				else
+					gSystemCycleCount=gNextTimerEvent;
+			}
 		}
 
 		//
@@ -146,10 +164,10 @@ class CSystem : public CSystemBase
 		//
 		// CPU
 		//
-		inline void  Poke_CPU(uint32 addr, uint8 data) { mMemoryHandlers[addr]->Poke(addr,data);};
-		inline uint8 Peek_CPU(uint32 addr) { return mMemoryHandlers[addr]->Peek(addr);};
-		inline void  PokeW_CPU(uint32 addr,uint16 data) { mMemoryHandlers[addr]->Poke(addr,data&0xff);addr++;mMemoryHandlers[addr]->Poke(addr,data>>8);};
-		inline uint16 PeekW_CPU(uint32 addr) {return ((mMemoryHandlers[addr]->Peek(addr))+(mMemoryHandlers[addr]->Peek(addr+1)<<8));};
+		inline void  Poke_CPU(uint32 addr, uint8 data) { mMemoryHandlers[(uint16)addr]->Poke(addr,data);};
+		inline uint8 Peek_CPU(uint32 addr) { return mMemoryHandlers[(uint16)addr]->Peek(addr);};
+		inline void  PokeW_CPU(uint32 addr,uint16 data) { mMemoryHandlers[(uint16)addr]->Poke(addr,data&0xff);addr++;mMemoryHandlers[(uint16)addr]->Poke(addr,data>>8);};
+		inline uint16 PeekW_CPU(uint32 addr) {return ((mMemoryHandlers[(uint16)addr]->Peek(addr))+(mMemoryHandlers[(uint16)addr]->Peek(addr+1)<<8));};
 
 // High level cart access for debug etc
 
@@ -206,6 +224,13 @@ class CSystem : public CSystemBase
 		CSusie			*mSusie;
 
 		uint32			mFileType;
+
+		// Largest number of cycles a sleeping CPU may skip in one
+		// Update(); 0 means the hardware answer, straight to the next
+		// timer event.  Set by the driving code, not by Reset().
+		// Deliberately last, so adding it leaves every other member's
+		// offset -- and therefore the generated code -- untouched.
+		uint32			mSleepAdvanceLimit;
 };
 
 extern bool LynxLineDrawn[256];

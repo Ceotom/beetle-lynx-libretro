@@ -312,7 +312,7 @@ class CSusie : public CLynxBase
 
 		uint32	PaintSprites(void);
 
-		int	StateAction(StateMem *sm, int load, int data_only);
+		int	StateAction(StateMem *sm, int load, int data_only, const char* sname_prefix = "");
 
 	private:
 		void	DoMathDivide(void);

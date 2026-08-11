@@ -69,6 +69,7 @@ CSystem::CSystem(MDFNFILE *fp, const char *bios_path)
 	mSusie(NULL)
 {
 	mFileType=HANDY_FILETYPE_ILLEGAL;
+	mSleepAdvanceLimit = 0;		// Set by the driving code, not by Reset()
 
 	char clip[11];
 	file_read(fp, clip, 11, 1);
@@ -315,7 +316,7 @@ static void TransformInput(void)
  }
 }
 
-int StateAction(StateMem *sm, int load, int data_only)
+int CSystem::StateAction(StateMem *sm, int load, int data_only, const char* sname_prefix)
 {
  SFORMAT SystemRegs[] =
  {
@@ -327,17 +328,32 @@ int StateAction(StateMem *sm, int load, int data_only)
         SFVAR(gSystemNMI),
         SFVAR(gSystemCPUSleep),
         SFVAR(gSystemHalt),
-	SFARRAYN(lynxie->GetRamPointer(), RAM_SIZE, "RAM"),
+	SFARRAYN(GetRamPointer(), RAM_SIZE, "RAM"),
+	// Which lines the machine has painted so far this frame; the rest are
+	// filled with black when the frame ends.  For a single Lynx a state is
+	// always taken between frames, where this has just been spent and is
+	// about to be cleared, so it never mattered.  Machine 2 of a ComLynx
+	// pair is mid-picture at that moment, and restoring it without this
+	// blacks out a band of the lines it had already drawn.
+	SFARRAYB(LynxLineDrawn, 256),
 	SFEND
  };
+ char section_name[64];
 
- int ret = MDFNSS_StateAction(sm, load, data_only, SystemRegs, "SYST", false);
- ret &= lynxie->mSusie->StateAction(sm, load, data_only);
- ret &= lynxie->mMemMap->StateAction(sm, load, data_only);
- ret &= lynxie->mCart->StateAction(sm, load, data_only);
- ret &= lynxie->mMikie->StateAction(sm, load, data_only);
- ret &= lynxie->mCpu->StateAction(sm, load, data_only);
+ snprintf(section_name, sizeof(section_name), "%sSYST", sname_prefix);
+
+ int ret = MDFNSS_StateAction(sm, load, data_only, SystemRegs, section_name, false);
+ ret &= mSusie->StateAction(sm, load, data_only, sname_prefix);
+ ret &= mMemMap->StateAction(sm, load, data_only, sname_prefix);
+ ret &= mCart->StateAction(sm, load, data_only, sname_prefix);
+ ret &= mMikie->StateAction(sm, load, data_only, sname_prefix);
+ ret &= mCpu->StateAction(sm, load, data_only, sname_prefix);
  return ret;
+}
+
+int StateAction(StateMem *sm, int load, int data_only)
+{
+ return lynxie->StateAction(sm, load, data_only);
 }
 
 void DoSimpleCommand(int cmd)
