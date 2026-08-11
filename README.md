@@ -29,9 +29,9 @@ system directory, exactly as for Beetle Lynx.
 Work in progress, on branch `comlynx`.
 
 - [x] Core renamed and building as Beetle Lynx-Com
-- [ ] Shared core changes (link timing, transmitter, save state coverage)
-- [ ] Two-machine driver
-- [ ] Two input ports, 320x102 output, core options
+- [x] Shared core changes (link timing, transmitter, save state coverage)
+- [x] Two-machine driver, 320x102 output, two input ports
+- [ ] Core options and settings
 - [ ] Save states and the save state self test
 
 ## Building
