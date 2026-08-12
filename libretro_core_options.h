@@ -79,7 +79,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "lynx_com_uart_txrdy_irq",
       "ComLynx: Transmit IRQ on TXRDY (Restart Required)",
       NULL,
-      "Raise the transmit interrupt when the holding register frees, not when the shift register empties. The hardware specification separates the two transmit status bits - TXRDY is the holding register, TXEMPTY is holding and shift together - and words the interrupt as firing while 'its UART buffer is ready', which reads as TXRDY. This core has always used TXEMPTY, which tells a program the transmitter is free only after the byte has fully gone, so it can never keep the next one queued. Only California Games needs the other reading, and it needs it to pair up at all; with this off it never gets past its own title screen in two-player. Everything else is worse for it: lifting the ceiling multiplies a game's link traffic two to four times, which measurably costs Hockey, Zarlor Mercenary and Basketbrawl their frame rate and makes Checkered Flag stutter. Turning this on also staggers the two machines further apart at start, because California Games needs both together and neither alone. Not safe to differ between netplay peers: it changes link timing, so a session where one side has it set and the other does not will desynchronise.",
+      "Fire the transmit interrupt when the holding register frees instead of when the shift register empties. Only California Games needs it, and cannot pair up without it; everything else loses frame rate, Hockey and Zarlor Mercenary most. Both netplay peers must set it the same or the session desyncs. Applied when content loads.",
       NULL,
       NULL,
       {
