@@ -29,6 +29,7 @@
 //
 
 #include <string.h>
+#include <stdlib.h>
 
 #include "system.h"
 
@@ -48,6 +49,17 @@ extern retro_log_printf_t log_cb;
 // 256 cycles, so this leaves a fourfold margin on the finest timing the link
 // can distinguish.
 #define SYNC_QUANTUM		64
+
+// Define LYNXCOM_TEST_STATE to have the core test its own save states and report
+// the result at CloseGame.  Off by default; it is a test, not an instrument, and
+// it drives the machines from a synthesized input stream rather than the pads.
+// What it does and why it has to live in here is at the harness itself, further
+// down.  Build it with:
+//
+//   make CPPFLAGS="-DLYNXCOM_TEST_STATE=1 -DLYNX_TEST_POISON=1"
+//
+// LYNX_TEST_POISON belongs with it: without it the test cannot see a forgotten
+// display register.
 
 // Machines constructed.  Everything below is written against this rather than
 // against LYNXCOM_SCREENS, so a screen slot with no machine behind it stays a
@@ -420,8 +432,376 @@ void Load(MDFNFILE *fp, const char *bios_path)
 	 NumMachines, LynxComSoundMachine + 1);
 }
 
+#ifdef LYNXCOM_TEST_STATE
+//
+// Save state round trip, driven from inside the emulation.
+//
+// What has to be shown is that a state is a complete description of a linked
+// session: run to frame N and save S1; run K more frames and save S2; reload S1,
+// run the same K frames again and save S3.  S2 and S3 have to match byte for
+// byte, and the picture at the end of both passes has to match too.  Anything
+// the driver forgot to save shows up as a divergence in the second pass, which
+// is the only way to find it -- a missing variable is invisible in the state
+// file by definition.
+//
+// It lives in here rather than in a script because the criterion is stated in
+// exact frame counts.  Key presses land on a wall clock, so a driver outside the
+// process can reach "about a second later" but never "exactly one frame later",
+// and K = 1 is the case most likely to catch a stale pointer.
+//
+// Input is synthesized from the frame index instead of being read from the pads.
+// That is what a movie recording would provide -- the same buttons at the same
+// frames in both passes -- and without it the test only proves that an idle
+// machine stays idle, which is the one case where nothing much is in flight.
+//
+// Build it with:  make CPPFLAGS="-DLYNXCOM_TEST_STATE=1 -DLYNX_TEST_POISON=1"
+//
+static const unsigned TestK[] = { 1, 60, 3600 };
+
+enum { TEST_ARM, TEST_RUN, TEST_REPLAY, TEST_DONE };
+
+struct TestSnapshot
+{
+ uint8* data;
+ uint32 len;
+};
+
+static unsigned TestPhase;
+static unsigned TestKIdx;
+static uint64 TestFrame;		// frames since the game was loaded
+static uint64 TestSeqBase;		// frame index N that S1 was taken at
+static uint64 TestSeqPos;		// frames run since N, in whichever pass
+static TestSnapshot TestS1;
+static TestSnapshot TestS2;
+static uint64 TestSurfaceHash;		// picture at the end of the first pass
+static unsigned TestPassed, TestFailed;
+static char TestReport[4][192];
+
+static bool TestSave(TestSnapshot* s)
+{
+ StateMem st;
+
+ memset(&st, 0, sizeof(st));
+
+ if(!MDFNSS_SaveSM(&st, 0, 0, NULL, NULL, NULL))
+ {
+  free(st.data);
+  return false;
+ }
+
+ free(s->data);
+ s->data = st.data;
+ s->len = st.len;
+
+ return true;
+}
+
+static bool TestLoad(const TestSnapshot* s)
+{
+ StateMem st;
+
+ memset(&st, 0, sizeof(st));
+ st.data = s->data;
+ st.len = s->len;
+
+ return MDFNSS_LoadSM(&st, 0, 0) != 0;
+}
+
+static void TestFree(TestSnapshot* s)
+{
+ free(s->data);
+ s->data = NULL;
+ s->len = 0;
+}
+
+// Deterministic, differs between the machines, and a pure function of the frame
+// index so both passes see it identically.  Low byte only: those are the
+// direction and face buttons, and leaving the switches alone keeps the test off
+// the console's own pause handling.
+static uint16 TestInput(unsigned m, uint64 f)
+{
+ uint32 h = (uint32)f * 2654435761u;
+
+ h ^= m * 0x9E3779B9u;
+ h ^= h >> 13;
+ h *= 1274126177u;
+ h ^= h >> 16;
+
+ return (uint16)(h & 0x00FF);
+}
+
+// The frame index about to be emulated.  During the two timed passes it is
+// counted from N, so the replay feeds frame N+j exactly what the first pass fed
+// frame N+j.
+static uint64 TestInputFrame(void)
+{
+ if(TestPhase == TEST_RUN || TestPhase == TEST_REPLAY)
+  return TestSeqBase + TestSeqPos + 1;
+
+ return TestFrame;
+}
+
+// Is a byte actually on the wire?  The criterion asks for N to land in the
+// middle of a ComLynx transmission, which is where link state that was left out
+// of the save would do the most damage.
+static bool TestLinkBusy(void)
+{
+ for(unsigned i = 0; i < NumMachines; i++)
+ {
+  if(machine[i]->mMikie->ComLynxTxCountdown() || machine[i]->mMikie->ComLynxRxWaiting())
+   return true;
+ }
+
+ return false;
+}
+
+// Overwrite everything the emulation carries from frame to frame that a state
+// could have forgotten, then load on top of it.  A complete state puts all of it
+// back and the pass runs exactly as it would have; an incomplete one leaves the
+// wrong values in place and the pass diverges.
+//
+// The value has to be different every time, and that is the whole lesson of the
+// first version of this test.  Without poisoning it passed on a state that was
+// missing three display registers, because a state is only ever taken at a frame
+// boundary and machine 2 is at the same phase of its own picture at every such
+// boundary -- so the stale values happened to equal the right ones.  Two passes
+// poisoned identically would go wrong identically and hide the same way.
+//
+// Every value is wrong but *reachable*: a line counter within the screen, a
+// cycle count within the counter's range.  The first attempt used 0xB16B00B5
+// everywhere and it crashed the emulator instead of failing the test -- a DMA
+// counter of three billion has DisplayRenderLine paint lines until the process
+// dies, which says nothing about save states.  A state has to be judged by
+// whether the emulation diverges, and for that the poison has to be a state the
+// machine could genuinely have been in.
+static uint32 TestPoisonSeq;
+
+static void TestPoison(void)
+{
+ const uint32 n = ++TestPoisonSeq;
+
+ for(unsigned i = 0; i < NumMachines; i++)
+ {
+#ifdef LYNX_TEST_POISON
+  // Line within the screen, DMA counter within a frame's worth of lines,
+  // framebuffer pointer within RAM.
+  machine[i]->mMikie->PoisonDisplay(7 + (n * 13 + i * 29) % 90,
+				    3 + (n * 17 + i * 31) % 95,
+				    (n * 4093 + i * 8191) & 0xFFFC);
+#endif
+
+  // The borrowed globals, which this file holds rather than the core, and
+  // which reach the state only by being lent to each machine's SYST section.
+  ctx[i].gSuzieDoneTime = 1000000 + n * 7919;
+  ctx[i].gSystemCycleCount = 2000000 + n * 6997;
+  ctx[i].gNextTimerEvent = 2000000 + n * 7013;
+  ctx[i].gCPUBootAddress = 0x0200 + n;
+  ctx[i].gSystemIRQ = (n + i) & 1;
+  ctx[i].gSystemNMI = (n + i + 1) & 1;
+  ctx[i].gSystemCPUSleep = (n + i) & 1;
+  ctx[i].gSystemHalt = 0;		// halting would just stop the machine
+
+  for(unsigned y = 0; y < 256; y++)
+   ctx[i].LynxLineDrawn[y] = ((y + n + i) & 3) != 0;
+
+  // And the scheduler's own carried state, the one thing in section COML.
+  MachineSkew[i] = (int32)((n * 3001 + i * 5003) % 60000);
+ }
+
+ // mColourMap is left alone on purpose: it is a lookup table built from the
+ // pixel format, rebuilt only by DisplaySetAttributes, and no more part of the
+ // emulated machine than the window is.
+}
+
+static uint64 TestHashSurface(const MDFN_Surface* surface)
+{
+ uint64 h = 1469598103934665603ull;
+
+ if(!surface)
+  return 0;
+
+ for(int y = 0; y < LYNXCOM_SCREEN_H; y++)
+ {
+  for(int x = 0; x < LYNXCOM_SURFACE_W; x++)
+  {
+   const uint32 p = (surface->bpp == 16) ? surface->pixels[y * surface->pitch + x]
+					 : ((const uint32*)surface->pixels)[y * surface->pitch + x];
+
+   h = (h ^ p) * 1099511628211ull;
+  }
+ }
+
+ return h;
+}
+
+static void TestFail(const char* what)
+{
+ snprintf(TestReport[TestKIdx < 4 ? TestKIdx : 3], sizeof(TestReport[0]),
+	  "K=%-4u FAILED: %s", TestK[TestKIdx], what);
+ TestFailed++;
+ TestPhase = TEST_DONE;
+}
+
+static void TestStateStep(const MDFN_Surface* surface)
+{
+ switch(TestPhase)
+ {
+  case TEST_ARM:
+	// Ten seconds in, at a frame with the link actually busy.  Earlier than
+	// that and the games are still in their boot animation with nothing to
+	// say to each other.
+	//
+	// The wire is only occupied for a small share of any frame, so a game
+	// that talks at all offers such a moment within a few hundred frames.
+	// One that never does has stopped talking, which is worth saying out
+	// loud rather than silently testing nothing -- so after another ten
+	// seconds the test starts anyway and says the wire was idle.
+	if(TestFrame >= 600 && (TestLinkBusy() || TestFrame >= 1200))
+	{
+	 const bool busy = TestLinkBusy();
+
+	 if(!TestSave(&TestS1))
+	 {
+	  TestFail("could not write S1");
+	  break;
+	 }
+
+	 TestSeqBase = TestFrame;
+	 TestSeqPos = 0;
+	 TestPhase = TEST_RUN;
+
+	 if(log_cb)
+	  log_cb(RETRO_LOG_INFO, "StateTest: S1 taken at frame %llu, %u bytes, wire %s\n",
+		 (unsigned long long)TestSeqBase, (unsigned)TestS1.len,
+		 busy ? "busy" : "IDLE -- this game stopped talking");
+	}
+	break;
+
+  case TEST_RUN:
+	TestSeqPos++;
+
+	if(TestSeqPos >= TestK[TestKIdx])
+	{
+	 if(!TestSave(&TestS2))
+	 {
+	  TestFail("could not write S2");
+	  break;
+	 }
+
+	 TestSurfaceHash = TestHashSurface(surface);
+
+	 // Only the replay's load is poisoned, and that asymmetry is the point:
+	 // the first pass starts from whatever was live, the second from
+	 // wreckage, so anything the state fails to restore differs between
+	 // them.  Poisoning both loads would put both passes on the same wrong
+	 // footing and blind the test again -- which is the failure mode this
+	 // whole mechanism exists to fix.  Do not "fix" it by adding a second
+	 // call at the reload further down.
+	 TestPoison();
+
+	 if(!TestLoad(&TestS1))
+	 {
+	  TestFail("could not read S1 back");
+	  break;
+	 }
+
+	 TestSeqPos = 0;
+	 TestPhase = TEST_REPLAY;
+	}
+	break;
+
+  case TEST_REPLAY:
+	TestSeqPos++;
+
+	if(TestSeqPos >= TestK[TestKIdx])
+	{
+	 TestSnapshot s3 = { NULL, 0 };
+	 bool ok_state, ok_pic;
+
+	 if(!TestSave(&s3))
+	 {
+	  TestFail("could not write S3");
+	  break;
+	 }
+
+	 ok_state = (s3.len == TestS2.len) && !memcmp(s3.data, TestS2.data, s3.len);
+	 ok_pic = (TestHashSurface(surface) == TestSurfaceHash);
+
+	 if(ok_state && ok_pic)
+	  TestPassed++;
+	 else
+	  TestFailed++;
+
+	 snprintf(TestReport[TestKIdx], sizeof(TestReport[0]),
+		  "K=%-4u %s  state %u bytes %s, picture %s%s",
+		  TestK[TestKIdx], (ok_state && ok_pic) ? "PASS" : "FAIL",
+		  (unsigned)s3.len,
+		  ok_state ? "identical" : "DIFFERS",
+		  ok_pic ? "identical" : "DIFFERS",
+#ifdef LYNX_TEST_POISON
+		  ", poisoned");
+#else
+		  ", poisoned except the display registers (LYNX_TEST_POISON off)");
+#endif
+
+	 TestFree(&s3);
+	 TestFree(&TestS2);
+
+	 TestKIdx++;
+
+	 if(TestKIdx >= sizeof(TestK) / sizeof(TestK[0]))
+	 {
+	  TestFree(&TestS1);
+	  TestPhase = TEST_DONE;
+	 }
+	 else
+	 {
+	  // Back to N for the next length, so every K is measured from the same
+	  // starting state and a failure names the length, not the moment.
+	  if(!TestLoad(&TestS1))
+	  {
+	   TestFail("could not read S1 back");
+	   break;
+	  }
+
+	  TestSeqPos = 0;
+	  TestPhase = TEST_RUN;
+	 }
+	}
+	break;
+ }
+
+ TestFrame++;
+}
+#endif
+
 void CloseGame(void)
 {
+#ifdef LYNXCOM_TEST_STATE
+ if(log_cb)
+ {
+  for(unsigned k = 0; k < sizeof(TestK) / sizeof(TestK[0]); k++)
+  {
+   if(TestReport[k][0])
+    log_cb(RETRO_LOG_INFO, "StateTest: %s\n", TestReport[k]);
+  }
+
+  log_cb(RETRO_LOG_INFO, "StateTest: %u passed, %u failed%s\n", TestPassed, TestFailed,
+	 (TestPhase == TEST_DONE) ? "" : " -- RUN TOO SHORT, not every length was reached");
+ }
+
+ TestFree(&TestS1);
+ TestFree(&TestS2);
+
+ TestPhase = TEST_ARM;
+ TestKIdx = 0;
+ TestFrame = 0;
+ TestPassed = 0;
+ TestFailed = 0;
+ TestPoisonSeq = 0;
+ memset(TestReport, 0, sizeof(TestReport));
+#endif
+
  Cleanup();
 }
 
@@ -471,7 +851,14 @@ void Emulate(EmulateSpecStruct *espec)
    machine[i]->mMikie->miksynth.volume(0.50);
   }
 
+#ifdef LYNXCOM_TEST_STATE
+  // The pads are ignored while the state test runs; it needs the same buttons
+  // at the same frames in both passes, which a human at the keyboard cannot
+  // give it.
+  machine[i]->SetButtonData(TestInput(i, TestInputFrame()));
+#else
   machine[i]->SetButtonData(chee[i][0] | (chee[i][1] << 8));
+#endif
  }
 
  MDFNMP_ApplyPeriodicCheats();
@@ -637,6 +1024,12 @@ void Emulate(EmulateSpecStruct *espec)
   if(i != LynxComSoundMachine)
    machine[i]->mMikie->mikbuf.clear();
  }
+
+#ifdef LYNXCOM_TEST_STATE
+ // The end of the frame in every sense -- picture finished, audio closed off --
+ // so a state taken here is the one the frontend's own save key would take.
+ TestStateStep(espec->skip ? NULL : espec->surface);
+#endif
 }
 
 void SetInput(unsigned port, const char *type, uint8 *ptr)

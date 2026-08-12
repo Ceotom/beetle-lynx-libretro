@@ -55,7 +55,7 @@ Work in progress, on branch `comlynx`.
 - [x] Shared core changes (link timing, transmitter, save state coverage)
 - [x] Two-machine driver, 320x102 output, two input ports
 - [x] Core options and settings
-- [ ] Save states and the save state self test
+- [x] Save states and the save state self test
 
 ## Building
 
@@ -64,3 +64,20 @@ make -j$(nproc)
 ```
 
 Produces `mednafen_lynx_com_libretro.dll` / `.so` / `.dylib` depending on the platform.
+
+### Save state self test
+
+The core can test its own save states from the inside and report the result when the
+game is closed. It runs to frame N with the link busy and saves S1, runs K more frames
+to S2, reloads S1 and runs the same K frames to S3; S2 and S3 have to match byte for
+byte, and so does the picture. K is 1, 60 and 3600.
+
+```sh
+make -j$(nproc) CPPFLAGS="-DLYNXCOM_TEST_STATE=1 -DLYNX_TEST_POISON=1"
+```
+
+The resulting core drives the machines from a synthesized input stream instead of the
+pads, so it is a test build and nothing else. The two defines belong together: the
+second one overwrites the emulation's carried-over state before the replay's load, and
+without it the test cannot see a variable the state forgot — dropping four display
+registers from the state makes it fail with the poison on and pass with it off.
