@@ -83,7 +83,8 @@ sample lands on a coincidence often enough to report a working link as a dead on
 
 ## Status
 
-Work in progress, on branch `comlynx`.
+On branch `comlynx`. Everything below is done; the core plays linked games with two
+pads, survives save states and rewind mid-match, and holds a netplay session.
 
 - [x] Core renamed and building as Beetle Lynx-Com
 - [x] Shared core changes (link timing, transmitter, save state coverage)
@@ -91,7 +92,7 @@ Work in progress, on branch `comlynx`.
 - [x] Core options and settings
 - [x] Save states and the save state self test
 - [x] Library sweep and Linux build
-- [ ] Hands-on session: two pads, save/load and rewind during a match, netplay
+- [x] Hands-on session: two pads, save/load and rewind during a match, netplay
 
 ## Building
 
