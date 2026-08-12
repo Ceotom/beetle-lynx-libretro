@@ -53,25 +53,33 @@ check that both sides match before starting one.
 All 33 ComLynx-capable titles in the No-Intro set react to the cable, Raiden's
 prototype included. That was measured rather than eyeballed: every game was run twice
 from the same source, once normally and once against a build whose only difference is
-that the cable is out, and the two pictures compared. A game whose picture changes took
-a different path, and the link is the only thing that could have sent it there. A
-screenshot of a single build would not answer this — a machine on its title screen may
-be running an attract loop, which looks exactly like a dead link.
+that the cable is out, and the two runs compared frame by frame. A game whose picture
+changes took a different path, and the link is the only thing that could have sent it
+there. A screenshot of a single build would not answer this — a machine on its title
+screen may be running an attract loop, which looks exactly like a dead link.
 
-Most announce it themselves within half a minute of boot by printing the number of
-consoles they found. Six need more than an idle run: California Games, Gauntlet,
-Turbo Sub, Xybots and Raiden only decide once a button has been pressed, and World
-Class Soccer asks about the link about three minutes in.
+Thirty-two of them notice with no input at all, the first divergence landing **6 to 19
+seconds after boot** and usually within seven. Only Raiden, a prototype that is broken
+in one-player too, needs a button pressed first; it then diverges at 8 seconds like the
+rest. Most of the 32 announce the result themselves by printing the number of consoles
+they found.
 
 Two are worth knowing about specifically:
 
-- **California Games** needs `ComLynx: Transmit IRQ on TXRDY` to complete its
-  handshake. With it on, one machine offers "PRESS BUTTON A TO START 2 PLAYER GAME"
-  while the other reports "2 PLAYERS CONNECTED"; with it off it never gets that far.
+- **California Games** sees the link on its own, but needs `ComLynx: Transmit IRQ on
+  TXRDY` to complete the handshake. With it on, one machine offers "PRESS BUTTON A TO
+  START 2 PLAYER GAME" while the other reports "2 PLAYERS CONNECTED"; with it off it
+  never gets that far.
 - **Gauntlet** prints no console counter at any point, so it can only be judged by what
   it does. It reaches character select with the two machines holding *different*
   characters, and stays link-dependent for at least three minutes of play — well past
   the watchdog that used to end the alliance after exactly 40 packets.
+
+Comparing one sampled frame instead of the sequence is a trap worth naming, because it
+fails quietly and in one direction only: two builds running entirely different code can
+still draw the same picture at some particular instant. World Class Soccer matches on a
+quarter of its frames, California Games and Turbo Sub on three quarters, so a single
+sample lands on a coincidence often enough to report a working link as a dead one.
 
 ## Status
 
