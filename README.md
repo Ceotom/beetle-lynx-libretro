@@ -17,7 +17,8 @@ nothing was ever wired to the other end of the cable.
 - Two controller ports. Port 1 drives machine 1, port 2 drives machine 2.
 - Sound comes from one machine, selectable with a core option.
 - **Save states are not interchangeable with Beetle Lynx**, in either direction, and
-  they are roughly twice the size.
+  they are twice the size and then some — 277736 bytes against 138099, because there
+  are two machines with 64K of RAM each. Rewind buffers fill about twice as fast.
 - The core is built as `mednafen_lynx_com_libretro` and shows up as "Beetle Lynx-Com",
   so it can be installed next to the stock core.
 
@@ -47,6 +48,31 @@ disagree about it will desynchronise. Unlike the Mednafen module this core canno
 a setting into the room's identity, so nothing stops such a session from connecting —
 check that both sides match before starting one.
 
+## Compatibility
+
+All 33 ComLynx-capable titles in the No-Intro set react to the cable, Raiden's
+prototype included. That was measured rather than eyeballed: every game was run twice
+from the same source, once normally and once against a build whose only difference is
+that the cable is out, and the two pictures compared. A game whose picture changes took
+a different path, and the link is the only thing that could have sent it there. A
+screenshot of a single build would not answer this — a machine on its title screen may
+be running an attract loop, which looks exactly like a dead link.
+
+Most announce it themselves within half a minute of boot by printing the number of
+consoles they found. Six need more than an idle run: California Games, Gauntlet,
+Turbo Sub, Xybots and Raiden only decide once a button has been pressed, and World
+Class Soccer asks about the link about three minutes in.
+
+Two are worth knowing about specifically:
+
+- **California Games** needs `ComLynx: Transmit IRQ on TXRDY` to complete its
+  handshake. With it on, one machine offers "PRESS BUTTON A TO START 2 PLAYER GAME"
+  while the other reports "2 PLAYERS CONNECTED"; with it off it never gets that far.
+- **Gauntlet** prints no console counter at any point, so it can only be judged by what
+  it does. It reaches character select with the two machines holding *different*
+  characters, and stays link-dependent for at least three minutes of play — well past
+  the watchdog that used to end the alliance after exactly 40 packets.
+
 ## Status
 
 Work in progress, on branch `comlynx`.
@@ -56,6 +82,8 @@ Work in progress, on branch `comlynx`.
 - [x] Two-machine driver, 320x102 output, two input ports
 - [x] Core options and settings
 - [x] Save states and the save state self test
+- [x] Library sweep and Linux build
+- [ ] Hands-on session: two pads, save/load and rewind during a match, netplay
 
 ## Building
 
@@ -64,6 +92,10 @@ make -j$(nproc)
 ```
 
 Produces `mednafen_lynx_com_libretro.dll` / `.so` / `.dylib` depending on the platform.
+
+Built and run on both Windows (gcc 16, MinGW-w64) and Linux (gcc 13, x86-64). The two
+produce identical pictures frame for frame and identical audio sample counts, which is
+what netplay between peers on different platforms depends on.
 
 ### Save state self test
 
