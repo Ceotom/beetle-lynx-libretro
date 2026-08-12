@@ -36,9 +36,10 @@ Beyond the ones Beetle Lynx already has (`Auto-rotate Screen`, `Color Format`,
 - **ComLynx: Transmit IRQ on TXRDY** — raise the transmit interrupt when the holding
   register frees rather than when the shift register empties. Default off. Only
   California Games needs it, and it needs it to pair up at all; with this off it
-  never gets past its own title screen in two-player. It costs everything else:
+  never gets past its own title screen in two-player. ~~It costs everything else:
   a game's link traffic multiplies two to four times, which measurably costs Hockey,
-  Zarlor Mercenary and Basketbrawl their frame rate and makes Checkered Flag stutter.
+  Zarlor Mercenary and Basketbrawl their frame rate and makes Checkered Flag stutter.~~
+  (Not actual for this port for some reason)
   Turning it on also staggers the two machines further apart at start, because
   California Games needs both together and neither alone. Applied when content is
   loaded, so it needs a restart to take effect.
