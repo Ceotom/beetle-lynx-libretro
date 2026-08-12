@@ -1,0 +1,41 @@
+# Software Information
+display_name = "Atari - Lynx (Beetle Lynx-Com)"
+authors = "K. Wilkins|Mednafen Team"
+supported_extensions = "lnx|lyx|bll|o"
+corename = "Beetle Lynx-Com"
+license = "Zlib|GPLv2"
+permissions = ""
+display_version = "v1.24.0-comlynx"
+categories = "Emulator"
+
+# Hardware Information
+manufacturer = "Atari"
+systemname = "Lynx"
+systemid = "atari_lynx"
+
+# Libretro Features
+supports_no_game = "false"
+database = "Atari - Lynx"
+savestate = "true"
+savestate_features = "deterministic"
+cheats = "false"
+input_descriptors = "true"
+memory_descriptors = "false"
+libretro_saves = "false"
+core_options = "true"
+core_options_version = "2.0"
+load_subsystem = "false"
+hw_render = "false"
+needs_fullpath = "false"
+disk_control = "false"
+single_purpose = "false"
+is_experimental = "true"
+
+# Firmware / BIOS
+firmware_count = 1
+firmware0_desc = "lynxboot.img (Lynx Boot Image)"
+firmware0_path = "lynxboot.img"
+firmware0_opt = "false"
+notes = "(!) lynxboot.img (md5): fcd403db69f54290b51035d82f835e7b"
+
+description = "Runs two ComLynx-linked Atari Lynx machines in one core instance, so two-player link games can be played without a second console and a second cartridge. Both machines run the same ROM; the picture is 320x102 with machine 1 on the left and machine 2 on the right, and each controller port drives its own machine. Every ComLynx-capable title in the library reacts to the cable, though California Games additionally needs the 'Transmit IRQ on TXRDY' core option to finish its handshake. Save states are twice the size of Beetle Lynx's and are not interchangeable with it in either direction. This is an experimental fork of Beetle Lynx meant to sit alongside the stock core rather than replace it - for ordinary one-player use, Handy or Beetle Lynx remain the better choice."
