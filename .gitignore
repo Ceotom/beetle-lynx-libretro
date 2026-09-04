@@ -5,3 +5,5 @@
 /old
 .vscode
 .clang-format
+AGENTS.md
+project-memory/
